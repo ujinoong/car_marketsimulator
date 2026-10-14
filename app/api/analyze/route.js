@@ -1,3 +1,4 @@
+import internalDemo from "../../../data/synthetic_internal_summary.json";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const DATASET="nvidia/Nemotron-Personas-Korea";
@@ -22,7 +23,7 @@ async function infer(question,personas){
  if(!config.key)return {missing:true,provider,model:config.models[0]};
  const errors=[];
  for(const model of [...new Set(config.models)]){
-  const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas})}],temperature:0.2,max_tokens:2500,stream:false}),signal:AbortSignal.timeout(45000),cache:"no-store"});
+  const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas,internal_demo:{customer_count:internalDemo.customer_count,dimensions:internalDemo.dimensions,opportunities:internalDemo.opportunities},instructions:"외부 합성 페르소나의 생활 니즈 기반 군집과 내부 가상 고객 집계의 고객군을 연결하여 비교하라. 내부 숫자는 데모 수치라고 반드시 명시하고, 직접 대응되는 내부 군집이 없으면 없다고 설명하라. 외부 군집과 내부 집계의 비율은 비교하지 말라."})}],temperature:0.2,max_tokens:2500,stream:false}),signal:AbortSignal.timeout(45000),cache:"no-store"});
   if(!response.ok){
    const body=await response.text();errors.push(model+" HTTP "+response.status+": "+body.slice(0,180));
    if(provider==="groq"&&(response.status===404||response.status===400))continue;
@@ -40,7 +41,7 @@ export async function POST(req){try{
  const {sample,selected,retrieved,failedPages}=await getPersonas(question);
  const inference=await infer(question,selected);
  const stats={retrieved,matched:selected.filter(x=>x.matchScore>0).length,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
- const base={question,stats,source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",limitations:["현재 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
+ const base={question,stats,internal:internalDemo,source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",limitations:["현재 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
  if(inference.missing)return Response.json({...base,error:"LLM_API_KEY_REQUIRED",detail:inference.provider==="groq"?"Vercel에 GROQ_API_KEY를 등록하면 시장 반응 AI 추론이 활성화됩니다.":"Vercel에 NVIDIA_API_KEY를 등록해야 합니다.",mode:"CONFIG_REQUIRED",model:inference.model},{status:503});
  return Response.json({...base,...inference.data,segments:inference.data.segments.map(({uuid,matchScore,...segment})=>segment),mode:"AI_SIMULATED",model:inference.model,provider:inference.provider});
  }catch(e){return Response.json({error:"시장 반응 분석 실패",detail:e.message},{status:500})}}
