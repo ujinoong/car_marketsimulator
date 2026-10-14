@@ -18,13 +18,22 @@ const SYSTEM=`너는 자동차보험 신상품 전략 분석가다. 입력된 NV
 function parseJSON(s){const t=String(s||"").replace(/^\s*```(?:json)?/i,"").replace(/```\s*$/,"").trim();try{return JSON.parse(t)}catch{const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(t.slice(a,b+1));throw Error("LLM 응답을 JSON으로 변환하지 못했습니다.")}}
 async function infer(question,personas){
  const provider=process.env.LLM_PROVIDER||"groq";
- const config=provider==="nvidia"?{key:process.env.NVIDIA_API_KEY,url:"https://integrate.api.nvidia.com/v1/chat/completions",model:process.env.LLM_MODEL||"nvidia/nemotron-3-super-120b-a12b"}:{key:process.env.GROQ_API_KEY,url:"https://api.groq.com/openai/v1/chat/completions",model:process.env.LLM_MODEL||"llama-3.3-70b-versatile"};
- if(!config.key)return {missing:true,provider,model:config.model};
- const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model:config.model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas})}],temperature:0.25,max_tokens:2200,stream:false}),signal:AbortSignal.timeout(45000),cache:"no-store"});
- if(!response.ok){const body=await response.text();throw Error("LLM "+provider+" HTTP "+response.status+": "+body.slice(0,220))}
- const payload=await response.json();const data=parseJSON(payload.choices?.[0]?.message?.content);
- if(!Array.isArray(data.segments)||!data.segments.length||!data.answer)throw Error("LLM 응답에 필요한 분석 필드가 없습니다.");
- return {data,provider,model:config.model};
+ const config=provider==="nvidia"?{key:process.env.NVIDIA_API_KEY,url:"https://integrate.api.nvidia.com/v1/chat/completions",models:[process.env.LLM_MODEL||"nvidia/nemotron-3-super-120b-a12b"]}:{key:process.env.GROQ_API_KEY,url:"https://api.groq.com/openai/v1/chat/completions",models:[process.env.LLM_MODEL,"openai/gpt-oss-20b","llama-3.1-8b-instant"].filter(Boolean)};
+ if(!config.key)return {missing:true,provider,model:config.models[0]};
+ const errors=[];
+ for(const model of [...new Set(config.models)]){
+  const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas})}],temperature:0.2,max_tokens:2500,stream:false}),signal:AbortSignal.timeout(45000),cache:"no-store"});
+  if(!response.ok){
+   const body=await response.text();errors.push(model+" HTTP "+response.status+": "+body.slice(0,180));
+   if(provider==="groq"&&(response.status===404||response.status===400))continue;
+   throw Error("LLM "+provider+" "+errors[errors.length-1]);
+  }
+  const payload=await response.json();
+  const data=parseJSON(payload.choices?.[0]?.message?.content);
+  if(!Array.isArray(data.segments)||!data.segments.length||!data.answer)throw Error("LLM 응답에 필요한 분석 필드가 없습니다.");
+  return {data,provider,model};
+ }
+ throw Error("사용 가능한 LLM 모델을 찾지 못했습니다: "+errors.join(" | ").slice(0,500));
 }
 export async function POST(req){try{
  const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
