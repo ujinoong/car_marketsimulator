@@ -1,0 +1,97 @@
+{
+  "data_status": "SYNTHETIC_DEMO",
+  "customer_count": 100000,
+  "dimensions": {
+    "fuel_type": [
+      {
+        "label": "하이브리드",
+        "count": 19011
+      },
+      {
+        "label": "가솔린",
+        "count": 41941
+      },
+      {
+        "label": "LPG",
+        "count": 4983
+      },
+      {
+        "label": "디젤",
+        "count": 20209
+      },
+      {
+        "label": "전기",
+        "count": 13856
+      }
+    ],
+    "vehicle_use": [
+      {
+        "label": "일상·출퇴근",
+        "count": 70021
+      },
+      {
+        "label": "장거리·레저",
+        "count": 20049
+      },
+      {
+        "label": "업무·상용",
+        "count": 9930
+      }
+    ],
+    "coverage_package": [
+      {
+        "label": "표준형",
+        "count": 54088
+      },
+      {
+        "label": "확장형",
+        "count": 22825
+      },
+      {
+        "label": "기본형",
+        "count": 23087
+      }
+    ],
+    "renewal_status": [
+      {
+        "label": "갱신 완료",
+        "count": 49780
+      },
+      {
+        "label": "신규",
+        "count": 18992
+      },
+      {
+        "label": "갱신 예정",
+        "count": 31228
+      }
+    ]
+  },
+  "opportunities": [
+    {
+      "id": "ev_high_value",
+      "label": "고가 전기차 이용군",
+      "count": 4378,
+      "definition": "전기차 + 차량가액 4천만원 이상"
+    },
+    {
+      "id": "ev_renewal_due",
+      "label": "갱신 예정 전기차 이용군",
+      "count": 4272,
+      "definition": "전기차 + 갱신 예정"
+    },
+    {
+      "id": "long_trip_basic_coverage",
+      "label": "장거리 운행·기본담보군",
+      "count": 4637,
+      "definition": "장거리·레저 + 기본형"
+    },
+    {
+      "id": "no_own_damage",
+      "label": "자차담보 미가입군",
+      "count": 17024,
+      "definition": "자차담보 N"
+    }
+  ],
+  "disclaimer": "전적으로 가상으로 생성된 10만 고객의 집계. 실제 보험사 데이터 및 시장 규모 아님. 고객군은 중복 가능."
+}
