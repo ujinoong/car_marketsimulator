@@ -1,25 +1,23 @@
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const DATASET="nvidia/Nemotron-Personas-Korea";
-const MODEL=process.env.NVIDIA_MODEL||"nvidia/nemotron-3-super-120b-a12b";
-const SYSTEM=`당신은 자동차보험 신상품 가상시장 조사 분석가입니다. 제공된 NVIDIA Nemotron-Personas-Korea의 실제 합성 페르소나 레코드만 근거로 소비자 반응을 시뮬레이션하세요. 페르소나는 실제 고객이 아니며 실제 보험 구매행동, 차량 보유, 보험 가입 이력, 구매확률이 없습니다. 질문에 맞는 5~12개 가상 페르소나의 반응을 추론하되, 사실과 추론을 구분하고 과도한 확신을 피하세요. 실제 가입률, 전체 시장점유율, 전국 대표성, 고객 수, 통계적 신뢰구간을 만들어내지 마세요. 인구통계학적 특성만으로 개인의 보험 위험이나 구매 가능성을 단정하지 마세요. 한국어로 답하고 아래 JSON 객체만 출력하세요: {"title":"간결한 제목","answer":"2~3문장 핵심 결론","segments":[{"segment":"구체적 페르소나 유형","reaction":"높은 관심|조건부 관심|낮은 관심","reason":"질문과 페르소나 맥락에 근거한 추론","consideration":"반응을 바꿀 수 있는 상품 조건"}],"takeaway":"임원 관점의 검증할 가설","limitations":["합성 페르소나에 대한 LLM 가설이며 실제 구매확률이 아님"]}. 3~5개 세그먼트를 제시하세요.`;
-function clean(row){const x=row?.row||{};const fields=["uuid","age","sex","province","district","occupation","marital_status","family_type","housing_type","persona","professional_persona","family_persona","travel_persona","hobbies_and_interests"];return Object.fromEntries(fields.filter(k=>x[k]!==undefined).map(k=>[k,typeof x[k]==="string"?x[k].slice(0,350):x[k]]));}
-async function getPersonas(question){
- const seed=[...question].reduce((h,c)=>(Math.imul(h,31)+c.charCodeAt(0))>>>0,17);
- const offsets=[0,1,2].map((_,i)=>(seed+i*12973)%990000);
- const pages=await Promise.all(offsets.map(async offset=>{const u=new URL("https://datasets-server.huggingface.co/rows");u.searchParams.set("dataset",DATASET);u.searchParams.set("config","default");u.searchParams.set("split","train");u.searchParams.set("offset",String(offset));u.searchParams.set("length","4");const r=await fetch(u,{signal:AbortSignal.timeout(12000),headers:{"Accept":"application/json"},cache:"no-store"});if(!r.ok)throw Error("Hugging Face 페르소나 조회 실패 ("+r.status+")");const j=await r.json();return (j.rows||[]).map(clean)}));
- return pages.flat().filter(x=>x.uuid);
+const FIELDS=["uuid","age","sex","province","district","occupation","marital_status","family_type","housing_type","persona","professional_persona","family_persona","travel_persona","hobbies_and_interests"];
+const KEYWORDS=[["전기차",["전기차","EV","배터리","충전"]],["반려동물",["반려동물","펫","강아지","고양이"]],["가족",["자녀","아이","가족","육아","동승"]],["여행",["여행","장거리","주행","레저"]],["직업",["배달","운전","출퇴근","업무"]],["디지털",["사이버","해킹","앱","온라인"]]];
+function hash(s){return [...s].reduce((h,c)=>(Math.imul(h,31)+c.charCodeAt(0))>>>0,17)}
+function clean(x){return Object.fromEntries(FIELDS.filter(k=>x[k]!==undefined&&x[k]!==null).map(k=>[k,typeof x[k]==="string"?x[k].slice(0,500):x[k]]))}
+function relevance(p,q){const text=[p.persona,p.professional_persona,p.family_persona,p.travel_persona,p.hobbies_and_interests,p.occupation].join(" ").toLowerCase();const terms=KEYWORDS.filter(([_,words])=>words.some(w=>q.toLowerCase().includes(w.toLowerCase()))).flatMap(([_,words])=>words);return terms.reduce((n,w)=>n+(text.includes(w.toLowerCase())?1:0),0)}
+async function getPersonas(q){
+ const seed=hash(q),offsets=Array.from({length:6},(_,i)=>(seed+i*15485863)%999900);
+ const pages=await Promise.allSettled(offsets.map(async offset=>{const url=new URL("https://datasets-server.huggingface.co/rows");for(const [k,v] of Object.entries({dataset:DATASET,config:"default",split:"train",offset:String(offset),length:"20"}))url.searchParams.set(k,v);const r=await fetch(url,{signal:AbortSignal.timeout(18000),next:{revalidate:3600}});if(!r.ok)throw Error("Hugging Face HTTP "+r.status);const j=await r.json();return (j.rows||[]).map(v=>clean(v.row||{})).filter(p=>p.uuid)}));
+ const successful=pages.filter(x=>x.status==="fulfilled").flatMap(x=>x.value);if(!successful.length)throw Error("공개 페르소나 데이터 조회에 실패했습니다. 잠시 후 다시 시도해주세요.");
+ const unique=[...new Map(successful.map(x=>[x.uuid,x])).values()];const ranked=unique.map((p,i)=>({...p,_score:relevance(p,q),_order:i})).sort((a,b)=>b._score-a._score||a._order-b._order);
+ return {sample:unique,selected:ranked.slice(0,12).map(({_score,_order,...p})=>({...p,matchScore:_score})),retrieved:unique.length,failedPages:pages.length-pages.filter(x=>x.status==="fulfilled").length};
 }
-function extractJSON(s){const t=s.replace(/^\s*```(?:json)?/i,"").replace(/```\s*$/,"").trim();try{return JSON.parse(t)}catch{const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(t.slice(a,b+1));throw Error("모델 응답을 JSON으로 해석할 수 없습니다.")}}
+function group(rows,key){const counts={};for(const p of rows){const v=String(p[key]||"미상");counts[v]=(counts[v]||0)+1}return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,count])=>({name,count}))}
 export async function POST(req){try{
- const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);
- if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
- const personas=await getPersonas(question);
- if(!personas.length)throw Error("페르소나 데이터를 불러오지 못했습니다.");
- const key=process.env.NVIDIA_API_KEY;
- if(!key)return Response.json({error:"NVIDIA_API_KEY 설정 필요",detail:"Hugging Face 페르소나 조회는 준비되었으나 LLM 추론을 위해 Vercel 환경변수 NVIDIA_API_KEY가 필요합니다.",personasLoaded:personas.length},{status:503});
- const response=await fetch("https://integrate.api.nvidia.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({model:MODEL,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas})}],temperature:0.3,max_tokens:1800,stream:false}),signal:AbortSignal.timeout(55000),cache:"no-store"});
- if(!response.ok){const e=await response.text();throw Error("NVIDIA LLM 응답 오류 ("+response.status+"): "+e.slice(0,180))}
- const payload=await response.json(),result=extractJSON(payload.choices?.[0]?.message?.content||"");
- return Response.json({question,...result,personas:personas.map(({uuid,age,sex,province,district,occupation,persona})=>({uuid,age,sex,province,district,occupation,persona})),source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",model:MODEL,mode:"AI_SIMULATED",disclaimer:"합성 페르소나 기반 LLM 가설입니다. 실제 시장조사·가입확률·고객 반응이 아닙니다."});
- }catch(e){return Response.json({error:"시뮬레이션 실패",detail:e.message},{status:500})}}
+ const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
+ const {sample,selected,retrieved,failedPages}=await getPersonas(question);
+ const relevant=selected.filter(x=>x.matchScore>0),matched=relevant.length;
+ const segments=selected.slice(0,5).map(p=>({segment:`${p.age}세 · ${p.province||"지역 미상"} · ${p.occupation||"직업 미상"}`,reaction:p.matchScore>0?"질문 관련 단서 있음":"관련 단서 확인 안 됨",reason:[p.persona,p.hobbies_and_interests,p.family_persona].filter(Boolean).join(" / ").slice(0,290),consideration:"보험 상품에 대한 실제 선호·가입 의향은 데이터에 없으므로 별도 조사 필요",uuid:p.uuid,matchScore:p.matchScore}));
+ return Response.json({question,title:"한국인 합성 페르소나 탐색 결과",answer:`NVIDIA 공개 데이터에서 ${retrieved}개 레코드를 조회하고 질문과 텍스트가 관련된 페르소나를 우선 표시했습니다. 선별한 12개 중 ${matched}개에서 질문 키워드와 겹치는 생활 맥락이 확인됐습니다. 이는 상품 가입 의향이나 수요 예측이 아닙니다.`,segments,takeaway:"관련 페르소나의 생활 맥락을 기반으로 고객 인터뷰·설문 가설을 설계하세요. 실제 가입률·시장 규모는 이 데이터로 산출할 수 없습니다.",limitations:["현재는 공개 데이터 API를 이용한 부분 표본 탐색입니다. 전체 100만 건 DB 검색은 아직 연결되지 않았습니다.","키워드 일치는 실제 구매 의향이나 상품 반응을 의미하지 않습니다.",...(failedPages?[`데이터 요청 ${failedPages}건이 실패해 성공한 응답만 사용했습니다.`]:[])],personas:selected,stats:{retrieved,matched,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")},source:"NVIDIA Nemotron-Personas-Korea (Hugging Face 공개 Dataset Viewer API)",model:"미사용 · 실제 데이터 검색",mode:"DATA_EXPLORATION",disclaimer:"합성 페르소나 텍스트 탐색 결과이며, 보험 가입 의향·가입률·실제 시장 반응을 추정하지 않습니다."});
+ }catch(e){return Response.json({error:"데이터 탐색 실패",detail:e.message},{status:500})}}
