@@ -14,10 +14,24 @@ async function getPersonas(q){
  return {sample:unique,selected:ranked.slice(0,12).map(({_score,_order,...p})=>({...p,matchScore:_score})),retrieved:unique.length,failedPages:pages.length-pages.filter(x=>x.status==="fulfilled").length};
 }
 function group(rows,key){const counts={};for(const p of rows){const v=String(p[key]||"미상");counts[v]=(counts[v]||0)+1}return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,count])=>({name,count}))}
+const SYSTEM=`너는 자동차보험 신상품 전략 분석가다. 입력된 NVIDIA 한국인 합성 페르소나 레코드를 참고하여 질문 속 보험 상품에 대한 소비자 반응 가설을 추론한다. 페르소나에 없는 차량 소유, 보험 가입, 운행거리 등의 사실을 단정하지 말고 조건부 가정으로 명시한다. 특정 인구통계 특성만으로 보험 위험을 평가하지 않는다. 응답은 한국어 JSON 객체만: {"title":"제목","answer":"핵심 결론 2문장","segments":[{"segment":"예상 타겟 유형","reaction":"높은 관심|조건부 관심|낮은 관심","reason":"페르소나에 근거한 추론 이유와 필요한 가정","consideration":"상품 설계 및 검증 조건"}],"takeaway":"임원용 실행 시사점","limitations":["검증되지 않은 추론임"]}. 세그먼트 3~5개. 실제 가입률, 시장 규모, 확률 수치를 창작하지 않는다.`;
+function parseJSON(s){const t=String(s||"").replace(/^\s*```(?:json)?/i,"").replace(/```\s*$/,"").trim();try{return JSON.parse(t)}catch{const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(t.slice(a,b+1));throw Error("LLM 응답을 JSON으로 변환하지 못했습니다.")}}
+async function infer(question,personas){
+ const provider=process.env.LLM_PROVIDER||"groq";
+ const config=provider==="nvidia"?{key:process.env.NVIDIA_API_KEY,url:"https://integrate.api.nvidia.com/v1/chat/completions",model:process.env.LLM_MODEL||"nvidia/nemotron-3-super-120b-a12b"}:{key:process.env.GROQ_API_KEY,url:"https://api.groq.com/openai/v1/chat/completions",model:process.env.LLM_MODEL||"llama-3.3-70b-versatile"};
+ if(!config.key)return {missing:true,provider,model:config.model};
+ const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model:config.model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas})}],temperature:0.25,max_tokens:2200,stream:false}),signal:AbortSignal.timeout(45000),cache:"no-store"});
+ if(!response.ok){const body=await response.text();throw Error("LLM "+provider+" HTTP "+response.status+": "+body.slice(0,220))}
+ const payload=await response.json();const data=parseJSON(payload.choices?.[0]?.message?.content);
+ if(!Array.isArray(data.segments)||!data.segments.length||!data.answer)throw Error("LLM 응답에 필요한 분석 필드가 없습니다.");
+ return {data,provider,model:config.model};
+}
 export async function POST(req){try{
  const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
  const {sample,selected,retrieved,failedPages}=await getPersonas(question);
- const relevant=selected.filter(x=>x.matchScore>0),matched=relevant.length;
- const segments=selected.slice(0,5).map(p=>({segment:`${p.age}세 · ${p.province||"지역 미상"} · ${p.occupation||"직업 미상"}`,reaction:p.matchScore>0?"질문 관련 단서 있음":"관련 단서 확인 안 됨",reason:[p.persona,p.hobbies_and_interests,p.family_persona].filter(Boolean).join(" / ").slice(0,290),consideration:"보험 상품에 대한 실제 선호·가입 의향은 데이터에 없으므로 별도 조사 필요",uuid:p.uuid,matchScore:p.matchScore}));
- return Response.json({question,title:"한국인 합성 페르소나 탐색 결과",answer:`NVIDIA 공개 데이터에서 ${retrieved}개 레코드를 조회하고 질문과 텍스트가 관련된 페르소나를 우선 표시했습니다. 선별한 12개 중 ${matched}개에서 질문 키워드와 겹치는 생활 맥락이 확인됐습니다. 이는 상품 가입 의향이나 수요 예측이 아닙니다.`,segments,takeaway:"관련 페르소나의 생활 맥락을 기반으로 고객 인터뷰·설문 가설을 설계하세요. 실제 가입률·시장 규모는 이 데이터로 산출할 수 없습니다.",limitations:["현재는 공개 데이터 API를 이용한 부분 표본 탐색입니다. 전체 100만 건 DB 검색은 아직 연결되지 않았습니다.","키워드 일치는 실제 구매 의향이나 상품 반응을 의미하지 않습니다.",...(failedPages?[`데이터 요청 ${failedPages}건이 실패해 성공한 응답만 사용했습니다.`]:[])],personas:selected,stats:{retrieved,matched,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")},source:"NVIDIA Nemotron-Personas-Korea (Hugging Face 공개 Dataset Viewer API)",model:"미사용 · 실제 데이터 검색",mode:"DATA_EXPLORATION",disclaimer:"합성 페르소나 텍스트 탐색 결과이며, 보험 가입 의향·가입률·실제 시장 반응을 추정하지 않습니다."});
- }catch(e){return Response.json({error:"데이터 탐색 실패",detail:e.message},{status:500})}}
+ const inference=await infer(question,selected);
+ const stats={retrieved,matched:selected.filter(x=>x.matchScore>0).length,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
+ const base={question,personas:selected,stats,source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",limitations:["현재 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
+ if(inference.missing)return Response.json({...base,error:"LLM_API_KEY_REQUIRED",detail:inference.provider==="groq"?"Vercel에 GROQ_API_KEY를 등록하면 시장 반응 AI 추론이 활성화됩니다.":"Vercel에 NVIDIA_API_KEY를 등록해야 합니다.",mode:"CONFIG_REQUIRED",model:inference.model},{status:503});
+ return Response.json({...base,...inference.data,mode:"AI_SIMULATED",model:inference.model,provider:inference.provider});
+ }catch(e){return Response.json({error:"시장 반응 분석 실패",detail:e.message},{status:500})}}
