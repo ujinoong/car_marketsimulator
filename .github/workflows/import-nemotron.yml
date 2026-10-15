@@ -1,0 +1,37 @@
+name: Import Nemotron Pilot to Supabase
+on:
+  workflow_dispatch:
+    inputs:
+      import_limit:
+        description: 'Number of synthetic personas to import (max 10000)'
+        required: true
+        default: '10000'
+        type: choice
+        options:
+          - '1000'
+          - '10000'
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      IMPORT_LIMIT: ${{ inputs.import_limit }}
+      HF_HUB_DISABLE_PROGRESS_BARS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify database secret
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "Missing SUPABASE_DB_URL GitHub Actions secret"
+            exit 1
+          fi
+      - name: Install importer dependencies
+        run: pip install 'huggingface_hub>=0.25,<2' 'pyarrow>=17,<24' 'psycopg[binary]>=3.2,<4'
+      - name: Import pilot
+        run: python scripts/import_nemotron_supabase.py
