@@ -9,7 +9,7 @@ from pathlib import Path
 
 PRODUCTS=("장기","자동차","일반")
 LONG_CATEGORIES=("건강","운전자","실손","상해","자녀","재물")
-def generate(n=100000, out="synthetic_customer_portfolio.csv", summary="synthetic_portfolio_summary.json"):
+def generate(n=100000, out="synthetic_customer_portfolio.csv", summary="synthetic_portfolio_summary.json", compact=None):
     rng=random.Random(20261015)
     Path(out).parent.mkdir(parents=True,exist_ok=True)
     fields=["customer_id","age_band","gender","customer_status","holds_long","holds_auto","holds_general",
@@ -17,6 +17,9 @@ def generate(n=100000, out="synthetic_customer_portfolio.csv", summary="syntheti
             "auto_fuel_type","auto_vehicle_value_band","auto_use","auto_driver_scope","auto_renewal_due",
             "auto_claims_3y","auto_adas_proxy","auto_coverage_gap","auto_annual_mileage_band"]
     counts=collections.Counter()
+    packed=[]
+    codebooks={k:[] for k in fields if k!="customer_id"}
+    lookup={k:{} for k in codebooks}
     with open(out,"w",newline="",encoding="utf-8-sig") as f:
         writer=csv.DictWriter(f,fieldnames=fields);writer.writeheader()
         for i in range(n):
@@ -47,6 +50,14 @@ def generate(n=100000, out="synthetic_customer_portfolio.csv", summary="syntheti
                 auto_coverage_gap=int(holds_auto and rng.random()<.26),
                 auto_annual_mileage_band=rng.choices(["1만km 미만","1만~2만km","2만km 이상"],[42,43,15])[0] if holds_auto else "")
             writer.writerow(row)
+            if compact:
+                codes=[]
+                for k in codebooks:
+                    v=str(row[k])
+                    if v not in lookup[k]:
+                        lookup[k][v]=len(codebooks[k]);codebooks[k].append(v)
+                    codes.append(lookup[k][v])
+                packed.append(codes)
             counts["total"]+=1
             for k in ["age_band","gender","customer_status","long_monthly_premium_band","long_primary_category","auto_fuel_type","auto_adas_proxy"]:
                 if row[k]!="":counts[k+":"+str(row[k])]+=1
@@ -73,10 +84,14 @@ def generate(n=100000, out="synthetic_customer_portfolio.csv", summary="syntheti
     summary_data["ownership_combinations"]=[{"label":k.split(":",1)[1],"count":v} for k,v in counts.items() if k.startswith("combo:")]
     Path(summary).parent.mkdir(parents=True,exist_ok=True)
     Path(summary).write_text(json.dumps(summary_data,ensure_ascii=False,indent=2),encoding="utf-8")
+    if compact:
+        Path(compact).parent.mkdir(parents=True,exist_ok=True)
+        Path(compact).write_text(json.dumps({"status":"SYNTHETIC_DEMO","count":n,"fields":list(codebooks),"codebooks":codebooks,"rows":packed},ensure_ascii=False,separators=(",",":")),encoding="utf-8")
     print(f"Generated {n} fictional multi-line customers; NO actual company statistics.")
 if __name__=="__main__":
     p=argparse.ArgumentParser()
     p.add_argument("--count",type=int,default=100000)
     p.add_argument("--out",default="synthetic_customer_portfolio.csv")
     p.add_argument("--summary",default="synthetic_portfolio_summary.json")
-    a=p.parse_args();generate(a.count,a.out,a.summary)
+    p.add_argument("--compact",default=None)
+    a=p.parse_args();generate(a.count,a.out,a.summary,a.compact)
