@@ -1,1 +1,215 @@
-{"data_status":"SYNTHETIC_DEMO","customer_count":100000,"dimensions":{},"ownership_combinations":[],"opportunities":[],"not_actual_company_data":true}
+{
+  "data_status": "SYNTHETIC_DEMO",
+  "dataset": "Fictional multi-line insurance customer portfolio",
+  "generated_at": "2026-10-15",
+  "customer_count": 100000,
+  "unit": "one fictional customer per row, overlapping product holdings",
+  "not_actual_company_data": true,
+  "sampling_note": "All counts and distributions are fictional and are NOT calibrated to any internal dashboard or real insurer.",
+  "dimensions": {
+    "age_band": [
+      {
+        "label": "70대 이상",
+        "count": 9034
+      },
+      {
+        "label": "50대",
+        "count": 23666
+      },
+      {
+        "label": "60대",
+        "count": 19355
+      },
+      {
+        "label": "30대",
+        "count": 16951
+      },
+      {
+        "label": "20대 이하",
+        "count": 9033
+      },
+      {
+        "label": "40대",
+        "count": 21961
+      }
+    ],
+    "gender": [
+      {
+        "label": "남성",
+        "count": 47971
+      },
+      {
+        "label": "여성",
+        "count": 49076
+      },
+      {
+        "label": "미상",
+        "count": 2953
+      }
+    ],
+    "customer_status": [
+      {
+        "label": "기존",
+        "count": 73066
+      },
+      {
+        "label": "신규",
+        "count": 26934
+      }
+    ],
+    "long_monthly_premium_band": [
+      {
+        "label": "5만원 미만",
+        "count": 34114
+      },
+      {
+        "label": "5만~10만원",
+        "count": 20956
+      },
+      {
+        "label": "10만~20만원",
+        "count": 16601
+      },
+      {
+        "label": "20만~30만원",
+        "count": 9660
+      },
+      {
+        "label": "30만원 이상",
+        "count": 6099
+      }
+    ],
+    "long_primary_category": [
+      {
+        "label": "재물",
+        "count": 6279
+      },
+      {
+        "label": "자녀",
+        "count": 8645
+      },
+      {
+        "label": "운전자",
+        "count": 19313
+      },
+      {
+        "label": "건강",
+        "count": 23433
+      },
+      {
+        "label": "실손",
+        "count": 16612
+      },
+      {
+        "label": "상해",
+        "count": 13148
+      }
+    ],
+    "auto_fuel_type": [
+      {
+        "label": "가솔린",
+        "count": 20521
+      },
+      {
+        "label": "하이브리드",
+        "count": 9796
+      },
+      {
+        "label": "디젤",
+        "count": 8543
+      },
+      {
+        "label": "기타",
+        "count": 1812
+      },
+      {
+        "label": "전기",
+        "count": 6587
+      }
+    ],
+    "auto_adas_proxy": [
+      {
+        "label": "중간(대체지표)",
+        "count": 21829
+      },
+      {
+        "label": "높음(대체지표)",
+        "count": 11365
+      },
+      {
+        "label": "낮음(대체지표)",
+        "count": 14065
+      }
+    ],
+    "product_ownership": [
+      {
+        "label": "장기",
+        "count": 87430
+      },
+      {
+        "label": "자동차",
+        "count": 47259
+      },
+      {
+        "label": "일반",
+        "count": 8925
+      }
+    ]
+  },
+  "ownership_combinations": [
+    {
+      "label": "자동차",
+      "count": 9956
+    },
+    {
+      "label": "장기+자동차",
+      "count": 33091
+    },
+    {
+      "label": "장기",
+      "count": 48028
+    },
+    {
+      "label": "장기+자동차+일반",
+      "count": 3241
+    },
+    {
+      "label": "일반",
+      "count": 1643
+    },
+    {
+      "label": "장기+일반",
+      "count": 3070
+    },
+    {
+      "label": "자동차+일반",
+      "count": 971
+    }
+  ],
+  "opportunities": [
+    {
+      "id": "cross_sell_long_auto",
+      "label": "장기·자동차 동시 보유군",
+      "count": 36332,
+      "definition": "장기보험과 자동차보험 동시 보유"
+    },
+    {
+      "id": "adas_gap",
+      "label": "첨단운전자보조 추정·보장 공백군",
+      "count": 2905,
+      "definition": "자동차 보유 + ADAS 대체지표 높음 + 보장 공백(가상)"
+    },
+    {
+      "id": "renewal_gap",
+      "label": "갱신 예정·보장 공백군",
+      "count": 3659,
+      "definition": "자동차 갱신 예정 + 보장 공백(가상)"
+    },
+    {
+      "id": "high_mileage_gap",
+      "label": "고주행·보장 공백군",
+      "count": 1796,
+      "definition": "연간 주행 2만km 이상 + 보장 공백(가상)"
+    }
+  ]
+}
