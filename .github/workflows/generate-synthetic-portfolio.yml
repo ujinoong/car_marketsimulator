@@ -1,0 +1,42 @@
+name: Generate 100k Synthetic Portfolio
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/generate_synthetic_portfolio.py'
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Generate and validate fictional customer data
+        run: |
+          python scripts/generate_synthetic_portfolio.py --count 100000 --out /tmp/synthetic_customer_portfolio.csv --summary data/synthetic_portfolio_summary.json --compact data/synthetic_portfolio_compact.json
+          python - <<'PY'
+          import json
+          p=json.load(open("data/synthetic_portfolio_compact.json"))
+          s=json.load(open("data/synthetic_portfolio_summary.json"))
+          assert len(p["rows"])==100000 and p["count"]==100000
+          assert s["customer_count"]==100000 and s["not_actual_company_data"]
+          assert sum(x["count"] for x in s["ownership_combinations"])==100000
+          print("PASS: 100000 unique fictional customers and product ownership combinations")
+          PY
+      - name: Commit generated portfolio for Vercel deployment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/synthetic_portfolio_summary.json data/synthetic_portfolio_compact.json
+          if git diff --cached --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "Generate 100k fictional customers for question-aware internal analysis"
+            git push
+          fi
