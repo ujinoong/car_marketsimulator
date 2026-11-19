@@ -3,16 +3,51 @@ export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const DATASET="nvidia/Nemotron-Personas-Korea";
 const FIELDS=["uuid","age","sex","province","district","occupation","marital_status","family_type","housing_type","persona","professional_persona","family_persona","travel_persona","hobbies_and_interests"];
-const KEYWORDS=[["전기차",["전기차","EV","배터리","충전"]],["반려동물",["반려동물","펫","강아지","고양이"]],["가족",["자녀","아이","가족","육아","동승"]],["여행",["여행","장거리","주행","레저"]],["직업",["배달","운전","출퇴근","업무"]],["디지털",["사이버","해킹","앱","온라인"]]];
+const TOPICS=[
+ ["자율주행",["자율주행","레벨3","레벨 3","ADAS","운전자 보조"],["운전","출퇴근","기술","자동차","안전","책임","사고","통근","데이터"]],
+ ["전기차",["전기차","배터리","충전","EV"],["자동차","친환경","출퇴근","충전","기술","에너지","환경"]],
+ ["가족",["자녀","가족","어린이","동승","반려동물","펫"],["가족","자녀","육아","반려동물","여행","돌봄"]],
+ ["운행",["장거리","고주행","운전","업무","택배","배달","여행"],["출퇴근","운전","장거리","여행","업무","배송","이동"]],
+ ["보안",["사이버","해킹","보안","개인정보"],["디지털","앱","보안","기술","데이터","개인정보"]]
+];
 function hash(s){return [...s].reduce((h,c)=>(Math.imul(h,31)+c.charCodeAt(0))>>>0,17)}
-function clean(x){return Object.fromEntries(FIELDS.filter(k=>x[k]!==undefined&&x[k]!==null).map(k=>[k,typeof x[k]==="string"?x[k].slice(0,500):x[k]]))}
-function relevance(p,q){const text=[p.persona,p.professional_persona,p.family_persona,p.travel_persona,p.hobbies_and_interests,p.occupation].join(" ").toLowerCase();const terms=KEYWORDS.filter(([_,words])=>words.some(w=>q.toLowerCase().includes(w.toLowerCase()))).flatMap(([_,words])=>words);return terms.reduce((n,w)=>n+(text.includes(w.toLowerCase())?1:0),0)}
+function clean(x){return Object.fromEntries(FIELDS.filter(k=>x[k]!==undefined&&x[k]!==null).map(k=>[k,typeof x[k]==="string"?x[k].slice(0,350):x[k]]))}
+function relevance(p,q){
+ const t=[p.persona,p.professional_persona,p.family_persona,p.travel_persona,p.hobbies_and_interests,p.occupation].join(" ").toLowerCase();
+ const query=q.toLowerCase();
+ const terms=[...new Set(TOPICS.filter(([,triggers])=>triggers.some(w=>query.includes(w.toLowerCase()))).flatMap(([, ,related])=>related))];
+ const literal=query.match(/[가-힣a-zA-Z]{2,}/g)||[];
+ return terms.reduce((n,w)=>n+(t.includes(w.toLowerCase())?2:0),0)+literal.slice(0,10).reduce((n,w)=>n+(t.includes(w.toLowerCase())?3:0),0);
+}
+function ageBand(p){const n=Number(p.age);return n>=10&&n<100?Math.floor(n/10)*10+"대":"미상"}
+function distribution(rows,key,max=5){const m=new Map();for(const p of rows){const v=key==="age"?ageBand(p):String(p[key]||"미상");if(v!=="미상")m.set(v,(m.get(v)||0)+1)}return [...m].sort((a,b)=>b[1]-a[1]).slice(0,max).map(([name,count])=>({name,count}))}
+function diversify(rows,limit){
+ const chosen=[],seen=new Set(),groups=new Map();
+ for(const p of rows){
+  const k=ageBand(p)+"|"+String(p.province||"미상")+"|"+String(p.occupation||"미상").slice(0,15);
+  if(!groups.has(k))groups.set(k,[]);
+  groups.get(k).push(p);
+ }
+ for(const group of groups.values()){const p=group[0];if(p&&!seen.has(p.uuid)){chosen.push(p);seen.add(p.uuid)}if(chosen.length>=limit)break}
+ for(const p of rows){if(chosen.length>=limit)break;if(!seen.has(p.uuid)){chosen.push(p);seen.add(p.uuid)}}
+ return chosen;
+}
 async function getPersonas(q){
- const seed=hash(q),offsets=Array.from({length:6},(_,i)=>(seed+i*15485863)%999900);
- const pages=await Promise.allSettled(offsets.map(async offset=>{const url=new URL("https://datasets-server.huggingface.co/rows");for(const [k,v] of Object.entries({dataset:DATASET,config:"default",split:"train",offset:String(offset),length:"20"}))url.searchParams.set(k,v);const r=await fetch(url,{signal:AbortSignal.timeout(18000),next:{revalidate:3600}});if(!r.ok)throw Error("Hugging Face HTTP "+r.status);const j=await r.json();return (j.rows||[]).map(v=>clean(v.row||{})).filter(p=>p.uuid)}));
- const successful=pages.filter(x=>x.status==="fulfilled").flatMap(x=>x.value);if(!successful.length)throw Error("공개 페르소나 데이터 조회에 실패했습니다. 잠시 후 다시 시도해주세요.");
- const unique=[...new Map(successful.map(x=>[x.uuid,x])).values()];const ranked=unique.map((p,i)=>({...p,_score:relevance(p,q),_order:i})).sort((a,b)=>b._score-a._score||a._order-b._order);
- return {sample:unique,selected:ranked.slice(0,12).map(({_score,_order,...p})=>({...p,matchScore:_score})),retrieved:unique.length,failedPages:pages.length-pages.filter(x=>x.status==="fulfilled").length};
+ // Deterministic dispersed sampling. This is NOT full dataset search.
+ const seed=hash(q),offsets=Array.from({length:12},(_,i)=>(seed+i*7919+Math.imul(i+1,15485863))%999000);
+ const pages=await Promise.allSettled(offsets.map(async offset=>{
+  const url=new URL("https://datasets-server.huggingface.co/rows");
+  for(const [k,v] of Object.entries({dataset:DATASET,config:"default",split:"train",offset:String(offset),length:"40"}))url.searchParams.set(k,v);
+  const r=await fetch(url,{signal:AbortSignal.timeout(14000),next:{revalidate:3600}});
+  if(!r.ok)throw Error("Hugging Face HTTP "+r.status);
+  const j=await r.json();return (j.rows||[]).map(v=>clean(v.row||{})).filter(p=>p.uuid);
+ }));
+ const unique=[...new Map(pages.filter(x=>x.status==="fulfilled").flatMap(x=>x.value).map(p=>[p.uuid,p])).values()];
+ const ranked=unique.map(p=>({...p,matchScore:relevance(p,q)})).sort((a,b)=>b.matchScore-a.matchScore);
+ const matched=ranked.filter(p=>p.matchScore>0);
+ const selected=diversify(matched.length>=8?matched:ranked,8);
+ return {sample:unique,selected,retrieved:unique.length,matchedCount:matched.length,failedPages:pages.filter(x=>x.status==="rejected").length,
+  cohortStats:{sample_size:unique.length,relevant_sample_size:matched.length,age:distribution(matched,"age"),region:distribution(matched,"province"),occupation:distribution(matched,"occupation")}};
 }
 async function getExternalEvidence(question){
  if(!process.env.TAVILY_API_KEY)return {status:"NOT_CONFIGURED",sources:[]};
@@ -30,15 +65,15 @@ async function getExternalEvidence(question){
  return {status:sources.length?"CONNECTED":"UNAVAILABLE",sources};
 }
 function group(rows,key){const counts={};for(const p of rows){const v=String(p[key]||"미상");counts[v]=(counts[v]||0)+1}return Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,count])=>({name,count}))}
-const SYSTEM=`한국 자동차보험 신상품 전략가. 질문에 맞는 행동·상황별 고객군 정확히 3개를 한국어 JSON으로 반환. 각 군집은 연령대, 지역, 직업·생활, 차량·운전 특성을 명시. 관찰되지 않은 지역·연령은 추정이라고 표기. 특정 개인 이름 금지. 가상 고객 수는 제공된 수치만 사용하고 실제 회사 데이터나 수요로 주장 금지. 자율주행은 레벨2와 레벨3를 구별. 창의적인 보장 아이디어와 검증 실험 제안. 형식: {"title":"","answer":"","segments":[{"segment":"","target_age":"","target_region":"","target_occupation":"","target_vehicle":"","target_basis":"","reaction":"","reason":"","consideration":"","opportunity":"","experiment":"","evidence":""}],"takeaway":"","limitations":["합성 데이터 기반 가설"]}. JSON만 반환.`;
+const SYSTEM=`한국 자동차보험 신상품 전략가. 질문에 맞는 행동·상황별 고객군 서로 구별되는 3~5개를 한국어 JSON으로 반환. 각 군집은 연령대, 지역, 직업·생활, 차량·운전 특성을 명시. 표본의 연령·지역·직업 분포는 대표성이 없으며 우선순위나 수요율로 단정하지 말 것. 관찰 근거가 부족하면 마케팅 검증 가설이라고 표기. 특정 개인 이름 금지. 가상 고객 수는 제공된 수치만 사용하고 실제 회사 데이터나 수요로 주장 금지. 자율주행은 레벨2와 레벨3를 구별. 창의적인 보장 아이디어와 검증 실험 제안. 형식: {"title":"","answer":"","segments":[{"segment":"","target_age":"","target_region":"","target_occupation":"","target_vehicle":"","target_basis":"","reaction":"","reason":"","consideration":"","opportunity":"","experiment":"","evidence":""}],"takeaway":"","limitations":["합성 데이터 기반 가설"]}. JSON만 반환.`;
 function parseJSON(s){const t=String(s||"").replace(/^\s*```(?:json)?/i,"").replace(/```\s*$/,"").trim();try{return JSON.parse(t)}catch{const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(t.slice(a,b+1));throw Error("LLM 응답을 JSON으로 변환하지 못했습니다.")}}
-async function infer(question,personas,external,internalDemo){
+async function infer(question,personas,external,internalDemo,cohortStats){
  const provider=process.env.LLM_PROVIDER||"groq";
  const config=provider==="nvidia"?{key:process.env.NVIDIA_API_KEY,url:"https://integrate.api.nvidia.com/v1/chat/completions",models:[process.env.LLM_MODEL||"nvidia/nemotron-3-super-120b-a12b"]}:{key:process.env.GROQ_API_KEY,url:"https://api.groq.com/openai/v1/chat/completions",models:["openai/gpt-oss-20b","openai/gpt-oss-120b"]};
  if(!config.key)return {missing:true,provider,model:config.models[0]};
  const errors=[];
  for(const model of [...new Set(config.models)]){
-  const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,personas:personas.slice(0,5).map(p=>({province:p.province,district:p.district,age_band:Math.floor(Number(p.age||0)/10)*10+"대",occupation_category:p.occupation,persona:String(p.persona||"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님|은|는|이|가|의|\(|,))/g,"[개인]").slice(0,100),family_persona:String(p.family_persona||"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님|은|는|이|가|의|\(|,))/g,"[개인]").slice(0,70),hobbies_and_interests:String(p.hobbies_and_interests||"").slice(0,70)})),external_evidence:external.sources.slice(0,3).map((x,i)=>({id:"S"+(i+1),title:x.title,url:x.url,excerpt:x.excerpt.slice(0,170)})),internal_demo:{customer_count:internalDemo.customer_count,query_status:internalDemo.query_status,matched_conditions:internalDemo.matched_conditions,query_note:internalDemo.query_note,opportunities:internalDemo.opportunities.slice(0,3).map(x=>({label:x.label,count:x.count}))},instructions:"외부 합성 페르소나의 생활 니즈 기반 군집과 내부 가상 고객 집계의 고객군을 연결하여 비교하라. 내부 숫자는 데모 수치라고 반드시 명시하고, 직접 대응되는 내부 군집이 없으면 없다고 설명하라. 외부 군집과 내부 집계의 비율은 비교하지 말라."})}],temperature:0.5,max_completion_tokens:1700,stream:false,...(provider==="groq"&&model!=="openai/gpt-oss-20b"?{response_format:{type:"json_object"}}:{})}),signal:AbortSignal.timeout(45000),cache:"no-store"});
+  const response=await fetch(config.url,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+config.key},body:JSON.stringify({model,messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({question,sample_profile:cohortStats,personas:personas.slice(0,8).map(p=>({province:p.province,district:p.district,age_band:Math.floor(Number(p.age||0)/10)*10+"대",occupation_category:p.occupation,persona:String(p.persona||"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님|은|는|이|가|의|\(|,))/g,"[개인]").slice(0,100),family_persona:String(p.family_persona||"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님|은|는|이|가|의|\(|,))/g,"[개인]").slice(0,70),hobbies_and_interests:String(p.hobbies_and_interests||"").slice(0,70)})),external_evidence:external.sources.slice(0,3).map((x,i)=>({id:"S"+(i+1),title:x.title,url:x.url,excerpt:x.excerpt.slice(0,170)})),internal_demo:{customer_count:internalDemo.customer_count,query_status:internalDemo.query_status,matched_conditions:internalDemo.matched_conditions,query_note:internalDemo.query_note,opportunities:internalDemo.opportunities.slice(0,3).map(x=>({label:x.label,count:x.count}))},instructions:"외부 합성 페르소나의 생활 니즈 기반 군집과 내부 가상 고객 집계의 고객군을 연결하여 비교하라. 내부 숫자는 데모 수치라고 반드시 명시하고, 직접 대응되는 내부 군집이 없으면 없다고 설명하라. 외부 군집과 내부 집계의 비율은 비교하지 말라."})}],temperature:0.5,max_completion_tokens:2300,stream:false,...(provider==="groq"&&model!=="openai/gpt-oss-20b"?{response_format:{type:"json_object"}}:{})}),signal:AbortSignal.timeout(45000),cache:"no-store"});
   if(!response.ok){
    const body=await response.text();errors.push(model+" HTTP "+response.status+": "+body.slice(0,180));
    if(provider==="groq"&&(response.status===404||response.status===400||response.status===413||response.status===429))continue;
@@ -59,8 +94,8 @@ function fallbackAnalysis(question,personas,external,internalDemo){
  const q=question.toLowerCase();
  const topic=/자율주행|adas|운전자.?보조|레벨.?3/i.test(q)?"자율주행 운전 책임":/배터리|전기차|충전|ev/i.test(q)?"전기차 배터리·충전":/사이버|해킹|보안/i.test(q)?"차량 사이버보안":/장거리|고주행|여행/i.test(q)?"장거리 운행":/반려동물|펫/i.test(q)?"반려동물 동승":"자동차보험 신담보";
  const observed=personas.filter(p=>p.age&&p.province);
- const age=observed.length?Math.floor(Number(observed[0].age)/10)*10+"대 (표본 사례, 대표성 없음)":"연령대 추가 검증 필요";
- const region=observed.length?String(observed[0].province)+" (표본 사례, 우선순위 미검증)":"지역별 추가 검증 필요";
+ const age="연령대 검증 필요 (표본만으로 우선순위 판단 불가)";
+ const region="지역별 검증 필요 (표본만으로 우선순위 판단 불가)";
  const occupations=[...new Set(personas.map(p=>p.occupation).filter(Boolean))].slice(0,2).join("·")||"직업별 추가 검증 필요";
  const profiles=[
   {segment:topic+" 위험 노출군",target_vehicle:"관련 기능·차량 보유 여부 확인 필요",reason:"관련 위험에 노출될 가능성이 있는 고객을 우선 검증",opportunity:topic+" 관련 사고·분쟁 지원 특약",experiment:"관련 사고 경험과 가입 의향을 별도로 조사"},
@@ -76,10 +111,11 @@ export async function POST(req){try{
  const personaData=personasResult.status==="fulfilled"?personasResult.value:{sample:[],selected:[],retrieved:0,failedPages:6};
  const externalData=external.status==="fulfilled"?external.value:{status:"UNAVAILABLE",sources:[]};
  const {sample,selected,retrieved,failedPages}=personaData;
+ const cohortStats=personaData.cohortStats||{sample_size:0,relevant_sample_size:0,age:[],region:[],occupation:[]};
  let inference;
- try{inference=await infer(question,selected,externalData,internalDemo)}catch(err){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
- const stats={retrieved,matched:selected.filter(x=>x.matchScore>0).length,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
- const base={question,stats,externalResearch:externalData,internal:internalDemo,source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",limitations:["현재 네모트론 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[]),...(externalData.status!=="CONNECTED"?["실시간 외부 검색 근거가 연결되지 않았거나 조회에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
- if(inference.missing)return Response.json({...base,error:"LLM_API_KEY_REQUIRED",detail:inference.provider==="groq"?"Vercel에 GROQ_API_KEY를 등록하면 시장 반응 AI 추론이 활성화됩니다.":"Vercel에 NVIDIA_API_KEY를 등록해야 합니다.",mode:"CONFIG_REQUIRED",model:inference.model},{status:503});
+ try{inference=await infer(question,selected,externalData,internalDemo,cohortStats)}catch(err){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
+ const stats={retrieved,matched:cohortStats.relevant_sample_size,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
+ const base={question,stats,cohortStats,externalResearch:externalData,internal:internalDemo,source:"NVIDIA Nemotron-Personas-Korea (Hugging Face)",limitations:["현재 네모트론 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[]),...(externalData.status!=="CONNECTED"?["실시간 외부 검색 근거가 연결되지 않았거나 조회에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
+ if(inference.missing){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
  return Response.json({...base,...inference.data,segments:inference.data.segments.map(({uuid,matchScore,...segment})=>({...segment,segment:String(segment.segment||"").replace(/\([^)]{2,18}\)/g,"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님))/g,"").trim()})),mode:inference.fallback?"LIMITED_FALLBACK":"AI_SIMULATED",model:inference.model,provider:inference.provider});
  }catch(e){return Response.json({error:"시장 반응 분석 실패",detail:e.message},{status:500})}}
