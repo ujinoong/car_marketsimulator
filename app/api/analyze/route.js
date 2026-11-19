@@ -138,7 +138,7 @@ function fallbackAnalysis(question,personas,external,internalDemo){
   {segment:"갱신 시점 보장 재점검군",target_vehicle:"자동차보험 갱신 예정 차량",reason:"갱신 접점에서 기존 보장과 신담보 차이를 설명할 수 있음",opportunity:"갱신 시 위험 진단·선택형 특약",experiment:"갱신 고객 대상 보장 설명 A/B 테스트"},
   {segment:"업무·장거리 운행군",target_vehicle:"업무·장거리 운행 차량",reason:"운행 시간과 상황에 따라 보장 공백 가능성을 검토",opportunity:"운행 상황별 사고 지원·서비스 특약",experiment:"주행 목적별 보장 수요 인터뷰"}
  ];
- return {title:topic+" 신상품 기회 분석",answer:"AI 서비스 사용량 제한으로 외부 고객군은 검증 전 가설로 제시합니다. 내부 고객 수는 가상 고객 원자료에서 별도로 집계했습니다.",segments:profiles.map((p,i)=>({...p,target_age:age,target_region:region,target_occupation:occupations,target_basis:"합성 페르소나 일부 사례와 AI 가설. 지역·연령의 우선순위는 검증되지 않음",reaction:"검증 필요",consideration:"실제 차량 보유·가입 의향 자료 없음",evidence:"NVIDIA 합성 페르소나 일부 사례이며 대표 표본이 아님"})),takeaway:"내부 가상 고객군을 후보로 삼고 실제 수요 조사로 우선순위를 검증하세요.",limitations:["AI 서비스 일시 제한에 따른 기본 분석 모드","시장 수요·가입률을 예측한 결과가 아님"]};
+ return {title:topic+" 신상품 기회 분석",answer:"AI 분석 응답을 완료하지 못해 외부 고객군은 검증 전 가설로 제시합니다. 내부 고객 수는 가상 고객 원자료에서 별도로 집계했습니다.",segments:profiles.map((p,i)=>({...p,target_age:age,target_region:region,target_occupation:occupations,target_basis:"합성 페르소나 일부 사례와 AI 가설. 지역·연령의 우선순위는 검증되지 않음",reaction:"검증 필요",consideration:"실제 차량 보유·가입 의향 자료 없음",evidence:"NVIDIA 합성 페르소나 일부 사례이며 대표 표본이 아님"})),takeaway:"내부 가상 고객군을 후보로 삼고 실제 수요 조사로 우선순위를 검증하세요.",limitations:["AI 호출 실패 또는 응답 형식 오류에 따른 기본 분석 모드","시장 수요·가입률을 예측한 결과가 아님"]};
 }
 export async function POST(req){try{
  const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
@@ -149,7 +149,7 @@ export async function POST(req){try{
  const {sample,selected,retrieved,failedPages}=personaData;
  const cohortStats=personaData.cohortStats||{sample_size:0,relevant_sample_size:0,age:[],region:[],occupation:[]};
  let inference;
- try{inference=await infer(question,selected,externalData,internalDemo,cohortStats)}catch(err){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
+ try{inference=await infer(question,selected,externalData,internalDemo,cohortStats)}catch(err){console.error("AI inference fallback:",String(err?.message||err).slice(0,400));inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
  const stats={retrieved,matched:cohortStats.relevant_sample_size,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
  const indexed=personaData.sourceMode==="SUPABASE_INDEX";
  const cached=personaData.sourceMode==="STATIC_CACHE";
