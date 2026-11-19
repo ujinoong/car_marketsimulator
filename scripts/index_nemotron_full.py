@@ -3,6 +3,7 @@ Run with SUPABASE_DB_URL; only synthetic public persona records are loaded.
 Never prints credentials. Designed for bounded GitHub Actions runs.
 """
 import os, re, time
+from urllib.parse import urlsplit, urlunsplit, quote
 import psycopg
 from psycopg.types.json import Jsonb
 from huggingface_hub import HfApi, hf_hub_download
@@ -44,12 +45,20 @@ def convert(p,shard):
  values=[txt(p.get(k)) for k in TEXT_FIELDS]
  search=" ".join(filter(None,[txt(p.get("occupation"),100),txt(p.get("province"),60),txt(p.get("district"),60)]+values))[:1600]
  return (uid,age,txt(p.get("province"),100),txt(p.get("occupation"),120),values[0],values[2], " ".join(values[1:])[:900],search,txt(p.get("district"),100),txt(p.get("sex"),30),shard)
+def safe_db_url():
+ raw=os.environ["SUPABASE_DB_URL"].strip().strip("\\\"").strip("\\'")
+ # A URL must not contain literal whitespace in its userinfo or host.
+ # Spaces in a pasted password are usually an accidental copy/paste error.
+ if any(c.isspace() for c in raw):
+  raise ValueError("SUPABASE_DB_URL contains whitespace. Copy the Session pooler URI again and replace [YOUR-PASSWORD] with your actual password; URL-encode special characters.")
+ return raw
+
 def main():
  if BATCH<1 or MAX_ROWS<1:raise ValueError("positive batch and max rows required")
  start=time.monotonic()
  paths=sorted(p for p in HfApi().list_repo_files(DATASET,repo_type="dataset") if p.endswith(".parquet"))
  if not paths:raise RuntimeError("No parquet shards found")
- with psycopg.connect(os.environ["SUPABASE_DB_URL"],connect_timeout=25,sslmode="require") as conn:
+ with psycopg.connect(safe_db_url(),connect_timeout=25,sslmode="require") as conn:
   with conn.cursor() as cur:
    cur.execute(DDL)
    conn.commit()
