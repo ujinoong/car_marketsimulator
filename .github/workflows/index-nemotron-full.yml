@@ -1,0 +1,46 @@
+name: Index Full Nemotron Corpus
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: 'Rows to process in this run (repeat to resume)'
+        required: true
+        type: choice
+        default: '50000'
+        options: ['10000','50000','100000']
+      create_search_index:
+        description: 'Build/search index after importing (may take time/storage)'
+        required: true
+        type: boolean
+        default: true
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      IMPORT_MAX_ROWS: ${{ inputs.batch_size }}
+      IMPORT_MAX_SECONDS: '2400'
+      HF_HUB_DISABLE_PROGRESS_BARS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check database connection secret
+        run: test -n "$SUPABASE_DB_URL" || (echo 'Set SUPABASE_DB_URL in repository Actions secrets' && exit 1)
+      - name: Install dependencies
+        run: pip install 'huggingface_hub>=0.25,<2' 'pyarrow>=17,<24' 'psycopg[binary]>=3.2,<4'
+      - name: Import next batch with resumable checkpoints
+        run: python scripts/index_nemotron_full.py
+      - name: Build search index and restricted RPC
+        if: ${{ inputs.create_search_index }}
+        run: |
+          python - <<'PY'
+          import os,psycopg
+          with psycopg.connect(os.environ['SUPABASE_DB_URL'],sslmode='require',connect_timeout=25) as conn:
+              with conn.cursor() as cur:
+                  cur.execute(open('scripts/nemotron_search.sql').read())
+                  cur.execute('select count(*) from public.nemotron_personas')
+                  print('Searchable rows:',cur.fetchone()[0])
+          PY
