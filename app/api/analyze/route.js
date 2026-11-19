@@ -74,7 +74,7 @@ async function getIndexedPersonas(q){
  const url=process.env.SUPABASE_URL;
  const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
  if(!url||!key)return null;
- const response=await fetch(url.replace(/\\/$/,"")+"/rest/v1/rpc/search_nemotron_personas",{
+ const response=await fetch(url.replace(/\/$/,"")+"/rest/v1/rpc/search_nemotron_personas",{
   method:"POST",headers:{"apikey":key,"Authorization":"Bearer "+key,"Content-Type":"application/json"},
   body:JSON.stringify({keywords:queryTerms(q),result_limit:120}),signal:AbortSignal.timeout(12000),cache:"no-store"
  });
