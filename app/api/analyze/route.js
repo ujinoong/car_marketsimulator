@@ -56,6 +56,20 @@ function queryTerms(question){
  const literal=(question.match(/[가-힣]{2,}|[A-Za-z]{3,}/g)||[]).filter(w=>!/^(고객|보험|특약|상품|시장|관련|추천|대상|분석|어떤|대비|신규|핵심)$/.test(w));
  return [...new Set([...literal.slice(0,3),...related])].filter(x=>x.length>=2).slice(0,8);
 }
+async function getCachedPersonas(q){
+ try{
+  const {readFile}=await import("node:fs/promises");
+  const {join}=await import("node:path");
+  const data=JSON.parse(await readFile(join(process.cwd(),"data","nemotron_persona_cache.json"),"utf8"));
+  const all=Array.isArray(data.records)?data.records:[];
+  if(!all.length)return null;
+  const ranked=all.map(p=>({...p,matchScore:relevance(p,q)})).sort((a,b)=>b.matchScore-a.matchScore);
+  const matched=ranked.filter(p=>p.matchScore>0);
+  const selected=diversify(matched.length>=8?matched:ranked,8);
+  return {sample:all,selected,retrieved:all.length,matchedCount:matched.length,failedPages:0,sourceMode:"STATIC_CACHE",
+   cohortStats:{sample_size:all.length,relevant_sample_size:matched.length,age:distribution(matched,"age"),region:distribution(matched,"province"),occupation:distribution(matched,"occupation")}};
+ }catch{return null}
+}
 async function getIndexedPersonas(q){
  const url=process.env.SUPABASE_URL;
  const key=process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -129,7 +143,7 @@ function fallbackAnalysis(question,personas,external,internalDemo){
 export async function POST(req){try{
  const body=await req.json(),question=String(body.question||"").trim().slice(0,1200);if(!question)return Response.json({error:"질문을 입력해주세요."},{status:400});
  const internalDemo=analyzeInternal(question);
- const [personasResult,external]=await Promise.allSettled([(async()=>{try{const indexed=await getIndexedPersonas(question);if(indexed?.retrieved)return indexed}catch(e){console.warn("Nemotron index unavailable:",e.message)}return getPersonas(question)})(),getExternalEvidence(question)]);
+ const [personasResult,external]=await Promise.allSettled([(async()=>{try{const indexed=await getIndexedPersonas(question);if(indexed?.retrieved)return indexed}catch(e){console.warn("Nemotron index unavailable:",e.message)}return await getCachedPersonas(question)||getPersonas(question)})(),getExternalEvidence(question)]);
  const personaData=personasResult.status==="fulfilled"?personasResult.value:{sample:[],selected:[],retrieved:0,failedPages:6};
  const externalData=external.status==="fulfilled"?external.value:{status:"UNAVAILABLE",sources:[]};
  const {sample,selected,retrieved,failedPages}=personaData;
@@ -138,7 +152,8 @@ export async function POST(req){try{
  try{inference=await infer(question,selected,externalData,internalDemo,cohortStats)}catch(err){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
  const stats={retrieved,matched:cohortStats.relevant_sample_size,age:group(sample.map(p=>({...p,age:Math.floor(Number(p.age||0)/10)*10+"대"})),"age"),province:group(sample,"province"),occupation:group(sample,"occupation")};
  const indexed=personaData.sourceMode==="SUPABASE_INDEX";
- const base={question,stats,cohortStats,searchMode:indexed?"INDEXED_SEARCH":"SAMPLED_API",externalResearch:externalData,internal:internalDemo,source:indexed?"NVIDIA Nemotron-Personas-Korea (Supabase indexed search)":"NVIDIA Nemotron-Personas-Korea (Hugging Face sample)",limitations:[indexed?"Supabase에 적재된 레코드에서 키워드 기반으로 검색한 상위 결과이며, 전체 적재 완료 여부와 의미 검색 정확도는 별도 확인이 필요합니다.":"현재 네모트론 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[]),...(externalData.status!=="CONNECTED"?["실시간 외부 검색 근거가 연결되지 않았거나 조회에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
+ const cached=personaData.sourceMode==="STATIC_CACHE";
+ const base={question,stats,cohortStats,searchMode:indexed?"INDEXED_SEARCH":cached?"CACHED_SAMPLE":"SAMPLED_API",externalResearch:externalData,internal:internalDemo,source:indexed?"NVIDIA Nemotron-Personas-Korea (Supabase indexed search)":cached?"NVIDIA Nemotron-Personas-Korea (precomputed sample cache)":"NVIDIA Nemotron-Personas-Korea (Hugging Face sample)",limitations:[indexed?"Supabase에 적재된 레코드에서 키워드 기반으로 검색한 상위 결과이며, 전체 적재 완료 여부와 의미 검색 정확도는 별도 확인이 필요합니다.":cached?"사전에 수집한 네모트론 합성 페르소나 일부를 검색합니다. 전체 100만 명을 검색하거나 대표 표본으로 추론하는 방식은 아닙니다.":"현재 네모트론 전체 데이터베이스가 아닌 공개 API에서 일부 레코드를 추출해 사용합니다.","합성 페르소나에 실제 차량 보유·보험 가입 의향 데이터가 없으며, 전국 대표성을 주장할 수 없습니다.",...(failedPages?["일부 데이터 요청에 실패했습니다."]:[]),...(externalData.status!=="CONNECTED"?["실시간 외부 검색 근거가 연결되지 않았거나 조회에 실패했습니다."]:[])],disclaimer:"LLM이 생성한 시장 반응 가설입니다. 실제 시장조사, 가입률 또는 검증된 수요 예측이 아닙니다."};
  if(inference.missing){inference={data:fallbackAnalysis(question,selected,externalData,internalDemo),model:"RULE_BASED_FALLBACK",provider:"local",fallback:true}}
  return Response.json({...base,...inference.data,segments:inference.data.segments.map(({uuid,matchScore,...segment})=>({...segment,segment:String(segment.segment||"").replace(/\([^)]{2,18}\)/g,"").replace(/[가-힣]{2,4}(?=\s*(?:씨|님))/g,"").trim()})),mode:inference.fallback?"LIMITED_FALLBACK":"AI_SIMULATED",model:inference.model,provider:inference.provider});
  }catch(e){return Response.json({error:"시장 반응 분석 실패",detail:e.message},{status:500})}}
